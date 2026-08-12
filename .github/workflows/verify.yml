@@ -1,0 +1,43 @@
+name: Verify dedicated core
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: 0
+      GOAMD64: v3
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Check formatting
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            printf '%s\n' "$unformatted"
+            exit 1
+          fi
+
+      - name: Test retained runtime
+        run: |
+          go test ./proxy/trojan ./proxy/shadowsocks ./proxy/socks ./infra/conf
+          go test ./transport/internet/tls \
+            -run '^(TestCertificateIssuing|TestExpiredCertificate|TestInsecureCertificates)$'
+
+      - name: Build core
+        run: |
+          go build -trimpath -ldflags="-s -w" -o /tmp/xray ./main
+          file /tmp/xray

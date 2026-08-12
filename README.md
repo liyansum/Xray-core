@@ -1,25 +1,67 @@
-# Xray-core for XrayR
+# Xray Core for XrayR
 
-This repository is a reduced Xray-core build intended for the paired XrayR
-repository. It keeps only the runtime features used by that deployment.
+This repository contains a reduced Xray core built specifically for the paired
+XrayR service. It is not intended to be a general-purpose Xray distribution.
 
-## Supported scope
+## Runtime scope
 
-- Inbound protocols: Trojan, Shadowsocks/SS2022, SOCKS and HTTP/mixed.
-- Outbound protocols: Shadowsocks/SS2022, SOCKS, direct and block.
-- Transports: raw TCP, UDP and TLS.
-- Services: routing, DNS including DoH/DoQ, FakeDNS, policy, statistics and
-  observatory support required by XrayR.
-- Traffic sniffing and the registered protocol sniffers remain available.
+- Inbound protocols: Trojan, Shadowsocks and Shadowsocks 2022, SOCKS, HTTP and
+  mixed HTTP/SOCKS.
+- Outbound protocols: Shadowsocks and Shadowsocks 2022, SOCKS, direct and block.
+- Networking: TCP, UDP, TLS, routing, DNS, DoH, DoQ, FakeDNS, policy, statistics
+  and the observatory components required by XrayR.
+- Traffic sniffing and the protocol sniffers required by the retained runtime.
 
-VMess, VLESS, REALITY, WebSocket, gRPC transport, mKCP/KCP, HTTPUpgrade,
-XHTTP/SplitHTTP, TUN, WireGuard, Hysteria, FinalMask, reverse proxy, the gRPC
-command API and SS-Plugin support are intentionally removed.
+The build intentionally excludes VMess, VLESS, REALITY, WebSocket, gRPC,
+mKCP/KCP, HTTPUpgrade, XHTTP/SplitHTTP, TUN, WireGuard, Hysteria, FinalMask,
+reverse proxy, SS-Plugin and unused command services.
 
-## Build
+Freedom outbound does not apply the upstream private-address final-rule policy.
+Local addresses and public IPv6 destinations are therefore handled by normal
+routing rules. Operators are responsible for applying any required destination
+restrictions in their own routing configuration or firewall.
 
-The paired XrayR release build uses `GOAMD64=v3` and `-ldflags="-s -w"`.
-GOAMD64 v3 binaries require an x86-64-v3 capable CPU.
+## TLS policy
 
-This project is derived from [XTLS/Xray-core](https://github.com/XTLS/Xray-core)
-and remains licensed under the Mozilla Public License 2.0. See `LICENSE`.
+When a server certificate is configured and `cipherSuites` is not explicitly
+set, TLS 1.2 is limited to these ECDSA AEAD suites:
+
+- `TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256`
+- `TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384`
+- `TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256`
+
+The legacy ECDSA CBC suites are excluded. TLS 1.3 cipher suites are controlled
+by Go and are unaffected.
+
+Go 1.26 enables hybrid post-quantum key exchange by default. Unless explicitly
+overridden, the supported-group preference is X25519MLKEM768,
+SecP256r1MLKEM768, SecP384r1MLKEM1024, X25519, P-256, P-384 and P-521.
+
+TLS session resumption is enabled by default. Set
+`disableSessionResumption: true` to disable it.
+
+## Build and verification
+
+```bash
+go test ./proxy/trojan ./proxy/shadowsocks ./proxy/socks ./infra/conf
+go test ./transport/internet/tls \
+  -run '^(TestCertificateIssuing|TestExpiredCertificate|TestInsecureCertificates)$'
+
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOAMD64=v3 \
+  go build -trimpath -ldflags="-s -w" -o xray ./main
+```
+
+The repository also provides a manually triggered verification workflow. This
+core is normally consumed as a Go module by the paired XrayR repository rather
+than released as a standalone binary.
+
+## Compatibility
+
+Configuration fields removed with unsupported protocols are ignored by the
+paired XrayR compatibility layer. The legacy Freedom `finalRules` schema remains
+parseable, but it has no runtime enforcement behavior in this fork.
+
+## License
+
+The retained source is distributed under the Mozilla Public License 2.0. See
+[LICENSE](LICENSE).
