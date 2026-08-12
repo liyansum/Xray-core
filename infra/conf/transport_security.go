@@ -67,7 +67,6 @@ type TLSConfig struct {
 	Certs                    []*TLSCertConfig `json:"certificates"`
 	ServerName               string           `json:"serverName"`
 	ALPN                     *StringList      `json:"alpn"`
-	EnableSessionResumption  *bool            `json:"enableSessionResumption"`
 	DisableSessionResumption bool             `json:"disableSessionResumption"`
 	DisableSystemRoot        bool             `json:"disableSystemRoot"`
 	MinVersion               string           `json:"minVersion"`
@@ -112,13 +111,7 @@ func (c *TLSConfig) Build() (proto.Message, error) {
 	if c.CurvePreferences != nil && len(*c.CurvePreferences) > 0 {
 		config.CurvePreferences = []string(*c.CurvePreferences)
 	}
-	config.EnableSessionResumption = true
-	if c.EnableSessionResumption != nil {
-		config.EnableSessionResumption = *c.EnableSessionResumption
-	}
-	if c.DisableSessionResumption {
-		config.EnableSessionResumption = false
-	}
+	config.EnableSessionResumption = !c.DisableSessionResumption
 	config.DisableSystemRoot = c.DisableSystemRoot
 	config.MinVersion = c.MinVersion
 	config.MaxVersion = c.MaxVersion
