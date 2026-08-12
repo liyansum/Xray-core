@@ -63,24 +63,25 @@ func (c *TLSCertConfig) Build() (*tls.Certificate, error) {
 }
 
 type TLSConfig struct {
-	AllowInsecure           bool             `json:"allowInsecure"`
-	Certs                   []*TLSCertConfig `json:"certificates"`
-	ServerName              string           `json:"serverName"`
-	ALPN                    *StringList      `json:"alpn"`
-	EnableSessionResumption bool             `json:"enableSessionResumption"`
-	DisableSystemRoot       bool             `json:"disableSystemRoot"`
-	MinVersion              string           `json:"minVersion"`
-	MaxVersion              string           `json:"maxVersion"`
-	CipherSuites            string           `json:"cipherSuites"`
-	Fingerprint             string           `json:"fingerprint"`
-	RejectUnknownSNI        bool             `json:"rejectUnknownSni"`
-	CurvePreferences        *StringList      `json:"curvePreferences"`
-	MasterKeyLog            string           `json:"masterKeyLog"`
-	PinnedPeerCertSha256    string           `json:"pinnedPeerCertSha256"`
-	VerifyPeerCertByName    string           `json:"verifyPeerCertByName"`
-	ECHServerKeys           string           `json:"echServerKeys"`
-	ECHConfigList           string           `json:"echConfigList"`
-	ECHSocketSettings       *SocketConfig    `json:"echSockopt"`
+	AllowInsecure            bool             `json:"allowInsecure"`
+	Certs                    []*TLSCertConfig `json:"certificates"`
+	ServerName               string           `json:"serverName"`
+	ALPN                     *StringList      `json:"alpn"`
+	EnableSessionResumption  *bool            `json:"enableSessionResumption"`
+	DisableSessionResumption bool             `json:"disableSessionResumption"`
+	DisableSystemRoot        bool             `json:"disableSystemRoot"`
+	MinVersion               string           `json:"minVersion"`
+	MaxVersion               string           `json:"maxVersion"`
+	CipherSuites             string           `json:"cipherSuites"`
+	Fingerprint              string           `json:"fingerprint"`
+	RejectUnknownSNI         bool             `json:"rejectUnknownSni"`
+	CurvePreferences         *StringList      `json:"curvePreferences"`
+	MasterKeyLog             string           `json:"masterKeyLog"`
+	PinnedPeerCertSha256     string           `json:"pinnedPeerCertSha256"`
+	VerifyPeerCertByName     string           `json:"verifyPeerCertByName"`
+	ECHServerKeys            string           `json:"echServerKeys"`
+	ECHConfigList            string           `json:"echConfigList"`
+	ECHSocketSettings        *SocketConfig    `json:"echSockopt"`
 }
 
 // Build implements Buildable.
@@ -111,7 +112,13 @@ func (c *TLSConfig) Build() (proto.Message, error) {
 	if c.CurvePreferences != nil && len(*c.CurvePreferences) > 0 {
 		config.CurvePreferences = []string(*c.CurvePreferences)
 	}
-	config.EnableSessionResumption = c.EnableSessionResumption
+	config.EnableSessionResumption = true
+	if c.EnableSessionResumption != nil {
+		config.EnableSessionResumption = *c.EnableSessionResumption
+	}
+	if c.DisableSessionResumption {
+		config.EnableSessionResumption = false
+	}
 	config.DisableSystemRoot = c.DisableSystemRoot
 	config.MinVersion = c.MinVersion
 	config.MaxVersion = c.MaxVersion
