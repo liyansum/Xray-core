@@ -1,11 +1,8 @@
 package confloader
 
 import (
-	"context"
 	"io"
 	"os"
-
-	"github.com/xtls/xray-core/common/errors"
 )
 
 type (
@@ -14,12 +11,14 @@ type (
 
 var EffectiveConfigFileLoader configFileLoader
 
-// LoadConfig reads from a path/url/stdin
-// actual work is in external module
+// LoadConfig reads from a local path or stdin. An optional module may replace
+// EffectiveConfigFileLoader when another source is required.
 func LoadConfig(file string) (io.Reader, error) {
 	if EffectiveConfigFileLoader == nil {
-		errors.LogInfo(context.Background(), "external config module not loaded, reading from stdin")
-		return os.Stdin, nil
+		if file == "-" || file == "stdin:" {
+			return os.Stdin, nil
+		}
+		return os.Open(file)
 	}
 	return EffectiveConfigFileLoader(file)
 }
