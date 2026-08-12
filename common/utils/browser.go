@@ -218,25 +218,6 @@ func applyMasqueradedHeaders(header http.Header, browser string, variant string)
 		}
 		header.Set("Sec-Fetch-Dest", "document")
 		header.Set("Priority", "u=0, i")
-	case "ws":
-		header.Set("Sec-Fetch-Mode", "websocket")
-		switch browser {
-		case "safari":
-			// Safari is NOT web-compliant here!
-			header.Set("Sec-Fetch-Dest", "websocket")
-		default:
-			header.Set("Sec-Fetch-Dest", "empty")
-		}
-		header.Set("Sec-Fetch-Site", "same-origin")
-		if header.Get("Cache-Control") == "" {
-			header.Set("Cache-Control", "no-cache")
-		}
-		if header.Get("Pragma") == "" {
-			header.Set("Pragma", "no-cache")
-		}
-		if header.Get("Accept") == "" {
-			header.Set("Accept", "*/*")
-		}
 	case "fetch":
 		header.Set("Sec-Fetch-Mode", "cors")
 		header.Set("Sec-Fetch-Dest", "empty")
