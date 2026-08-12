@@ -16,9 +16,6 @@ import (
 	"github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/transport/internet/finalmask/fragment"
 	"github.com/xtls/xray-core/transport/internet/finalmask/header/custom"
-	"github.com/xtls/xray-core/transport/internet/finalmask/mkcp/aes128gcm"
-	"github.com/xtls/xray-core/transport/internet/finalmask/mkcp/header"
-	"github.com/xtls/xray-core/transport/internet/finalmask/mkcp/original"
 	"github.com/xtls/xray-core/transport/internet/finalmask/noise"
 	"github.com/xtls/xray-core/transport/internet/finalmask/realm"
 	"github.com/xtls/xray-core/transport/internet/finalmask/salamander"
@@ -76,7 +73,6 @@ var (
 
 	udpmaskLoader = NewJSONConfigLoader(ConfigCreatorCache{
 		"header-custom": func() interface{} { return new(HeaderCustomUDP) },
-		"mkcp-legacy":   func() interface{} { return new(MkcpLegacy) },
 		"noise":         func() interface{} { return new(NoiseMask) },
 		"salamander":    func() interface{} { return new(Salamander) },
 		"sudoku":        func() interface{} { return new(Sudoku) },
@@ -589,41 +585,6 @@ func (c *HeaderCustomUDP) Build() (proto.Message, error) {
 			Client: client,
 			Server: server,
 		}, nil
-	}
-}
-
-type MkcpLegacy struct {
-	Header string `json:"header"`
-	Value  string `json:"value"`
-}
-
-func (c *MkcpLegacy) Build() (proto.Message, error) {
-	if len(c.Header) == 0 {
-		if len(c.Value) == 0 {
-			return &original.Config{}, nil
-		} else {
-			return &aes128gcm.Config{Password: c.Value}, nil
-		}
-	}
-	switch strings.ToLower(c.Header) {
-	case "dns":
-		domain := c.Value
-		if len(domain) == 0 {
-			domain = "www.baidu.com"
-		}
-		return &header.Config{ID: 0, Domain: domain}, nil
-	case "dtls":
-		return &header.Config{ID: 1}, nil
-	case "srtp":
-		return &header.Config{ID: 2}, nil
-	case "utp":
-		return &header.Config{ID: 3}, nil
-	case "wechat":
-		return &header.Config{ID: 4}, nil
-	case "wireguard":
-		return &header.Config{ID: 5}, nil
-	default:
-		return nil, errors.New("invalid header ", c.Header)
 	}
 }
 

@@ -1,5 +1,9 @@
 # Project X
 
+> This fork is a slim XrayR core. VMess, VLESS, REALITY, gRPC transport,
+> mKCP/KCP, HTTPUpgrade, and XHTTP/SplitHTTP have been removed. Supported
+> production transports are RAW/TCP, WebSocket, UDP, and TLS.
+
 [Project X](https://github.com/XTLS) originates from XTLS protocol, providing a set of network tools such as [Xray-core](https://github.com/XTLS/Xray-core) and [REALITY](https://github.com/XTLS/REALITY).
 
 [README](https://github.com/XTLS/Xray-core#readme) is open, so feel free to submit your project [here](https://github.com/XTLS/Xray-core/pulls).

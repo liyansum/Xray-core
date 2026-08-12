@@ -15,8 +15,6 @@ import (
 	"github.com/xtls/xray-core/proxy/shadowsocks"
 	"github.com/xtls/xray-core/proxy/shadowsocks_2022"
 	"github.com/xtls/xray-core/proxy/trojan"
-	vlessin "github.com/xtls/xray-core/proxy/vless/inbound"
-	vmessin "github.com/xtls/xray-core/proxy/vmess/inbound"
 
 	"github.com/xtls/xray-core/main/commands/base"
 )
@@ -78,10 +76,6 @@ func extractInboundUsers(inb *core.InboundHandlerConfig) []*protocol.User {
 		return nil
 	}
 	switch ty := inst.(type) {
-	case *vmessin.Config:
-		return ty.User
-	case *vlessin.Config:
-		return ty.Users
 	case *trojan.ServerConfig:
 		return ty.Users
 	case *shadowsocks.ServerConfig:

@@ -26,8 +26,6 @@ var (
 		"shadowsocks":   func() interface{} { return new(ShadowsocksServerConfig) },
 		"mixed":         func() interface{} { return new(SocksServerConfig) },
 		"socks":         func() interface{} { return new(SocksServerConfig) },
-		"vless":         func() interface{} { return new(VLessInboundConfig) },
-		"vmess":         func() interface{} { return new(VMessInboundConfig) },
 		"trojan":        func() interface{} { return new(TrojanServerConfig) },
 		"wireguard":     func() interface{} { return &WireGuardConfig{IsClient: false} },
 		"hysteria":      func() interface{} { return new(HysteriaServerConfig) },
@@ -43,8 +41,6 @@ var (
 		"http":        func() interface{} { return new(HTTPClientConfig) },
 		"shadowsocks": func() interface{} { return new(ShadowsocksClientConfig) },
 		"socks":       func() interface{} { return new(SocksClientConfig) },
-		"vless":       func() interface{} { return new(VLessOutboundConfig) },
-		"vmess":       func() interface{} { return new(VMessOutboundConfig) },
 		"trojan":      func() interface{} { return new(TrojanClientConfig) },
 		"hysteria":    func() interface{} { return new(HysteriaClientConfig) },
 		"dns":         func() interface{} { return new(DNSOutboundConfig) },
@@ -245,15 +241,6 @@ func requiresTransportSecurity(address *Address) bool {
 func validateOutboundTransportSecurity(rawConfig interface{}, senderSettings *proxyman.SenderConfig) error {
 	if senderSettings.StreamSettings != nil && senderSettings.StreamSettings.GetSecurityType() != "" {
 		return nil
-	}
-
-	if vlessCfg, ok := rawConfig.(*VLessOutboundConfig); ok {
-		if vlessCfg.Encryption != "" && vlessCfg.Encryption != "none" {
-			return nil
-		}
-		if requiresTransportSecurity(vlessCfg.Address) {
-			return errors.New("vless without TLS or other encryption is prohibited unless the server address is a private IP or domain")
-		}
 	}
 
 	if tjCfg, ok := rawConfig.(*TrojanClientConfig); ok {
@@ -605,12 +592,7 @@ func (c *Config) Build() (*core.Config, error) {
 	}
 
 	if c.Reverse != nil {
-		return nil, errors.PrintRemovedFeatureError(`"legacy reverse"`, `"VLESS Reverse Proxy"`)
-		r, err := c.Reverse.Build()
-		if err != nil {
-			return nil, errors.New("failed to build reverse configuration").Base(err)
-		}
-		config.App = append(config.App, serial.ToTypedMessage(r))
+		return nil, errors.New(`legacy reverse is not supported by this slim build`)
 	}
 
 	if c.FakeDNS != nil {

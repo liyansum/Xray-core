@@ -21,7 +21,6 @@ import (
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/features/policy"
 	"github.com/xtls/xray-core/features/routing"
-	"github.com/xtls/xray-core/transport/internet/reality"
 	"github.com/xtls/xray-core/transport/internet/stat"
 	"github.com/xtls/xray-core/transport/internet/tls"
 	"github.com/xtls/xray-core/transport/internet/udp"
@@ -371,12 +370,6 @@ func (s *Server) fallback(ctx context.Context, err error, sessionPolicy policy.S
 	alpn := ""
 	if tlsConn, ok := iConn.(*tls.Conn); ok {
 		cs := tlsConn.ConnectionState()
-		name = cs.ServerName
-		alpn = cs.NegotiatedProtocol
-		errors.LogInfo(ctx, "realName = "+name)
-		errors.LogInfo(ctx, "realAlpn = "+alpn)
-	} else if realityConn, ok := iConn.(*reality.Conn); ok {
-		cs := realityConn.ConnectionState()
 		name = cs.ServerName
 		alpn = cs.NegotiatedProtocol
 		errors.LogInfo(ctx, "realName = "+name)

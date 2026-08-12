@@ -16,8 +16,5 @@ func init() {
 		cmdUUID,
 		cmdX25519,
 		cmdWG,
-		cmdMLDSA65,
-		cmdMLKEM768,
-		cmdVLESSEnc,
 	)
 }

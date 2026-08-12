@@ -17,19 +17,9 @@ func (p TransportProtocol) Build() (string, error) {
 	switch strings.ToLower(string(p)) {
 	case "raw", "tcp":
 		return "tcp", nil
-	case "xhttp", "splithttp":
-		return "splithttp", nil
-	case "kcp", "mkcp":
-		return "mkcp", nil
-	case "grpc":
-		errors.PrintNonRemovalDeprecatedFeatureWarning("gRPC transport (with unnecessary costs, etc.)", "XHTTP stream-up H2")
-		return "grpc", nil
 	case "ws", "websocket":
 		errors.PrintNonRemovalDeprecatedFeatureWarning("WebSocket transport (with ALPN http/1.1, etc.)", "XHTTP H2 & H3")
 		return "websocket", nil
-	case "httpupgrade":
-		errors.PrintNonRemovalDeprecatedFeatureWarning("HTTPUpgrade transport (with ALPN http/1.1, etc.)", "XHTTP H2 & H3")
-		return "httpupgrade", nil
 	case "h2", "h3", "http":
 		return "", errors.PrintRemovedFeatureError("HTTP transport (without header padding, etc.)", "XHTTP stream-one H2 & H3")
 	case "quic":
@@ -42,24 +32,18 @@ func (p TransportProtocol) Build() (string, error) {
 }
 
 type StreamConfig struct {
-	Address             *Address           `json:"address"`
-	Port                uint16             `json:"port"`
-	Method              *TransportProtocol `json:"method"`
-	Network             *TransportProtocol `json:"network"`
-	Security            string             `json:"security"`
-	FinalMask           *FinalMask         `json:"finalmask"`
-	TLSSettings         *TLSConfig         `json:"tlsSettings"`
-	REALITYSettings     *REALITYConfig     `json:"realitySettings"`
-	RAWSettings         *TCPConfig         `json:"rawSettings"`
-	TCPSettings         *TCPConfig         `json:"tcpSettings"`
-	XHTTPSettings       *SplitHTTPConfig   `json:"xhttpSettings"`
-	SplitHTTPSettings   *SplitHTTPConfig   `json:"splithttpSettings"`
-	KCPSettings         *KCPConfig         `json:"kcpSettings"`
-	GRPCSettings        *GRPCConfig        `json:"grpcSettings"`
-	WSSettings          *WebSocketConfig   `json:"wsSettings"`
-	HTTPUPGRADESettings *HttpUpgradeConfig `json:"httpupgradeSettings"`
-	HysteriaSettings    *HysteriaConfig    `json:"hysteriaSettings"`
-	SocketSettings      *SocketConfig      `json:"sockopt"`
+	Address          *Address           `json:"address"`
+	Port             uint16             `json:"port"`
+	Method           *TransportProtocol `json:"method"`
+	Network          *TransportProtocol `json:"network"`
+	Security         string             `json:"security"`
+	FinalMask        *FinalMask         `json:"finalmask"`
+	TLSSettings      *TLSConfig         `json:"tlsSettings"`
+	RAWSettings      *TCPConfig         `json:"rawSettings"`
+	TCPSettings      *TCPConfig         `json:"tcpSettings"`
+	WSSettings       *WebSocketConfig   `json:"wsSettings"`
+	HysteriaSettings *HysteriaConfig    `json:"hysteriaSettings"`
+	SocketSettings   *SocketConfig      `json:"sockopt"`
 }
 
 // Build implements Buildable.
@@ -96,20 +80,6 @@ func (c *StreamConfig) Build() (*internet.StreamConfig, error) {
 		tm := serial.ToTypedMessage(ts)
 		config.SecuritySettings = append(config.SecuritySettings, tm)
 		config.SecurityType = tm.Type
-	case "reality":
-		if config.ProtocolName != "tcp" && config.ProtocolName != "splithttp" && config.ProtocolName != "grpc" {
-			return nil, errors.New("REALITY only supports RAW, XHTTP and gRPC for now.")
-		}
-		if c.REALITYSettings == nil {
-			return nil, errors.New(`REALITY: Empty "realitySettings".`)
-		}
-		ts, err := c.REALITYSettings.Build()
-		if err != nil {
-			return nil, errors.New("Failed to build REALITY config.").Base(err)
-		}
-		tm := serial.ToTypedMessage(ts)
-		config.SecuritySettings = append(config.SecuritySettings, tm)
-		config.SecurityType = tm.Type
 	case "xtls":
 		return nil, errors.PrintRemovedFeatureError(`Legacy XTLS`, `xtls-rprx-vision with TLS or REALITY`)
 	default:
@@ -129,39 +99,6 @@ func (c *StreamConfig) Build() (*internet.StreamConfig, error) {
 			Settings:     serial.ToTypedMessage(ts),
 		})
 	}
-	if c.XHTTPSettings != nil {
-		c.SplitHTTPSettings = c.XHTTPSettings
-	}
-	if c.SplitHTTPSettings != nil {
-		hs, err := c.SplitHTTPSettings.Build()
-		if err != nil {
-			return nil, errors.New("Failed to build XHTTP config.").Base(err)
-		}
-		config.TransportSettings = append(config.TransportSettings, &internet.TransportConfig{
-			ProtocolName: "splithttp",
-			Settings:     serial.ToTypedMessage(hs),
-		})
-	}
-	if c.KCPSettings != nil {
-		ts, err := c.KCPSettings.Build()
-		if err != nil {
-			return nil, errors.New("Failed to build mKCP config.").Base(err)
-		}
-		config.TransportSettings = append(config.TransportSettings, &internet.TransportConfig{
-			ProtocolName: "mkcp",
-			Settings:     serial.ToTypedMessage(ts),
-		})
-	}
-	if c.GRPCSettings != nil {
-		gs, err := c.GRPCSettings.Build()
-		if err != nil {
-			return nil, errors.New("Failed to build gRPC config.").Base(err)
-		}
-		config.TransportSettings = append(config.TransportSettings, &internet.TransportConfig{
-			ProtocolName: "grpc",
-			Settings:     serial.ToTypedMessage(gs),
-		})
-	}
 	if c.WSSettings != nil {
 		ts, err := c.WSSettings.Build()
 		if err != nil {
@@ -170,16 +107,6 @@ func (c *StreamConfig) Build() (*internet.StreamConfig, error) {
 		config.TransportSettings = append(config.TransportSettings, &internet.TransportConfig{
 			ProtocolName: "websocket",
 			Settings:     serial.ToTypedMessage(ts),
-		})
-	}
-	if c.HTTPUPGRADESettings != nil {
-		hs, err := c.HTTPUPGRADESettings.Build()
-		if err != nil {
-			return nil, errors.New("Failed to build HTTPUpgrade config.").Base(err)
-		}
-		config.TransportSettings = append(config.TransportSettings, &internet.TransportConfig{
-			ProtocolName: "httpupgrade",
-			Settings:     serial.ToTypedMessage(hs),
 		})
 	}
 	if c.HysteriaSettings != nil {

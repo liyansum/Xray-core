@@ -11,7 +11,6 @@ import (
 	"github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/session"
 	"github.com/xtls/xray-core/transport/internet"
-	"github.com/xtls/xray-core/transport/internet/reality"
 	"github.com/xtls/xray-core/transport/internet/stat"
 	"github.com/xtls/xray-core/transport/internet/tls"
 )
@@ -94,10 +93,6 @@ func Dial(ctx context.Context, dest net.Destination, streamSettings *internet.Me
 		if isFromMitmAlpn && !mitmAlpn11 && negotiatedProtocol != "h2" {
 			conn.Close()
 			return nil, errors.New("MITM freedom RAW TLS: unexpected Negotiated Protocol (" + negotiatedProtocol + ") with " + mitmServerName).AtWarning()
-		}
-	} else if config := reality.ConfigFromStreamSettings(streamSettings); config != nil {
-		if conn, err = reality.UClient(conn, config, ctx, dest); err != nil {
-			return nil, err
 		}
 	}
 
