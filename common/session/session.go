@@ -47,8 +47,6 @@ type Inbound struct {
 	Name string
 	// User is the user that authenticates for the inbound. May be nil if the protocol allows anonymous traffic.
 	User *protocol.MemoryUser
-	// VlessRoute is the user-sent VLESS UUID's 7th<<8 | 8th bytes.
-	VlessRoute net.Port
 	// Used by splice copy. Conn is actually internet.Connection. May be nil.
 	Conn net.Conn
 	// Used by splice copy. Timer of the inbound buf copier. May be nil.

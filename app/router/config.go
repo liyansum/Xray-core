@@ -57,10 +57,6 @@ func (rr *RoutingRule) BuildCondition() (Condition, error) {
 		conds.Add(NewPortMatcher(rr.LocalPortList, MatcherAsType_Local))
 	}
 
-	if rr.VlessRouteList != nil {
-		conds.Add(NewPortMatcher(rr.VlessRouteList, MatcherAsType_VlessRoute))
-	}
-
 	if len(rr.UserEmail) > 0 {
 		conds.Add(NewUserMatcher(rr.UserEmail))
 	}

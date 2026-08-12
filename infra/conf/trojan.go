@@ -24,7 +24,6 @@ type TrojanServerTarget struct {
 	Level    byte     `json:"level"`
 	Email    string   `json:"email"`
 	Password string   `json:"password"`
-	Flow     string   `json:"flow"`
 }
 
 // TrojanClientConfig is configuration of trojan servers
@@ -34,14 +33,11 @@ type TrojanClientConfig struct {
 	Level    byte                  `json:"level"`
 	Email    string                `json:"email"`
 	Password string                `json:"password"`
-	Flow     string                `json:"flow"`
 	Servers  []*TrojanServerTarget `json:"servers"`
 }
 
 // Build implements Buildable
 func (c *TrojanClientConfig) Build() (proto.Message, error) {
-	errors.PrintNonRemovalDeprecatedFeatureWarning("Trojan (with no Flow, etc.)", "VLESS with Flow & Seed")
-
 	if c.Address != nil {
 		c.Servers = []*TrojanServerTarget{
 			{
@@ -50,7 +46,6 @@ func (c *TrojanClientConfig) Build() (proto.Message, error) {
 				Level:    c.Level,
 				Email:    c.Email,
 				Password: c.Password,
-				Flow:     c.Flow,
 			},
 		}
 	}
@@ -70,10 +65,6 @@ func (c *TrojanClientConfig) Build() (proto.Message, error) {
 		if rec.Password == "" {
 			return nil, errors.New("Trojan password is not specified.")
 		}
-		if rec.Flow != "" {
-			return nil, errors.PrintRemovedFeatureError(`Flow for Trojan`, ``)
-		}
-
 		config.Server = &protocol.ServerEndpoint{
 			Address: rec.Address.Build(),
 			Port:    uint32(rec.Port),
@@ -107,7 +98,6 @@ type TrojanUserConfig struct {
 	Password string `json:"password"`
 	Level    byte   `json:"level"`
 	Email    string `json:"email"`
-	Flow     string `json:"flow"`
 }
 
 // TrojanServerConfig is Inbound configuration
@@ -119,8 +109,6 @@ type TrojanServerConfig struct {
 
 // Build implements Buildable
 func (c *TrojanServerConfig) Build() (proto.Message, error) {
-	errors.PrintNonRemovalDeprecatedFeatureWarning("Trojan (with no Flow, etc.)", "VLESS with Flow & Seed")
-
 	if c.Clients != nil {
 		c.Users = c.Clients
 	}
@@ -131,10 +119,6 @@ func (c *TrojanServerConfig) Build() (proto.Message, error) {
 
 	processClient := func(idx int) error {
 		rawUser := c.Users[idx]
-		if rawUser.Flow != "" {
-			return errors.PrintRemovedFeatureError(`Flow for Trojan`, ``)
-		}
-
 		config.Users[idx] = &protocol.User{
 			Level: uint32(rawUser.Level),
 			Email: rawUser.Email,

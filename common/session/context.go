@@ -18,7 +18,7 @@ const (
 	outboundSessionKey        ctx.SessionKey = 2
 	contentSessionKey         ctx.SessionKey = 3
 	isReverseMuxKey           ctx.SessionKey = 4  // is reverse mux
-	sockoptSessionKey         ctx.SessionKey = 5  // used by dokodemo to only receive sockopt.Mark
+	sockoptSessionKey         ctx.SessionKey = 5  // per-inbound socket options
 	trackedConnectionErrorKey ctx.SessionKey = 6  // used by observer to get outbound error
 	dispatcherKey             ctx.SessionKey = 7  // used by ss2022 inbounds to get dispatcher
 	timeoutOnlyKey            ctx.SessionKey = 8  // mux context's child contexts to only cancel when its own traffic times out

@@ -237,10 +237,7 @@ Download it from https://github.com/protocolbuffers/protobuf/releases
 			args := []string{
 				"--go_out", pwd,
 				"--go_opt", "paths=source_relative",
-				"--go-grpc_out", pwd,
-				"--go-grpc_opt", "paths=source_relative",
 				"--plugin", "protoc-gen-go=" + filepath.Join(GOBIN, "protoc-gen-go"+suffix),
-				"--plugin", "protoc-gen-go-grpc=" + filepath.Join(GOBIN, "protoc-gen-go-grpc"+suffix),
 			}
 			args = append(args, relProtoFile)
 			cmd := exec.Command(protoc, args...)

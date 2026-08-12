@@ -74,7 +74,6 @@ const (
 	MatcherAsType_Local MatcherAsType = iota
 	MatcherAsType_Source
 	MatcherAsType_Target
-	MatcherAsType_VlessRoute // for port
 )
 
 type IPMatcher struct {
@@ -130,8 +129,6 @@ func (v *PortMatcher) Apply(ctx routing.Context) bool {
 		return v.port.Contains(ctx.GetSourcePort())
 	case MatcherAsType_Target:
 		return v.port.Contains(ctx.GetTargetPort())
-	case MatcherAsType_VlessRoute:
-		return v.port.Contains(ctx.GetVlessRoute())
 	default:
 		panic("unk asType")
 	}
