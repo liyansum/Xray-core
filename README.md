@@ -6,7 +6,7 @@ repository. It keeps only the runtime features used by that deployment.
 ## Supported scope
 
 - Inbound protocols: Trojan, Shadowsocks/SS2022, SOCKS and HTTP/mixed.
-- Outbound protocols: Shadowsocks/SS2022, SOCKS, HTTP, Trojan, direct and block.
+- Outbound protocols: Shadowsocks/SS2022, SOCKS, direct and block.
 - Transports: raw TCP, UDP and TLS.
 - Services: routing, DNS including DoH/DoQ, FakeDNS, policy, statistics and
   observatory support required by XrayR.

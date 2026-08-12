@@ -32,10 +32,8 @@ var (
 		"blackhole":   func() interface{} { return new(BlackholeConfig) },
 		"direct":      func() interface{} { return new(FreedomConfig) },
 		"freedom":     func() interface{} { return new(FreedomConfig) },
-		"http":        func() interface{} { return new(HTTPClientConfig) },
 		"shadowsocks": func() interface{} { return new(ShadowsocksClientConfig) },
 		"socks":       func() interface{} { return new(SocksClientConfig) },
-		"trojan":      func() interface{} { return new(TrojanClientConfig) },
 	}, "protocol", "settings")
 )
 
@@ -208,31 +206,6 @@ func (c *OutboundDetourConfig) checkChainProxyConfig() error {
 	return nil
 }
 
-func requiresTransportSecurity(address *Address) bool {
-	if address == nil || address.Address == nil {
-		return false
-	}
-	if address.Family().IsIP() {
-		return !geodata.GetPrivateIPMatcher().Match(address.IP())
-	}
-	domain := strings.TrimSuffix(strings.ToLower(address.Domain()), ".")
-	return !geodata.GetPrivateDomainMatcher().MatchAny(domain)
-}
-
-func validateOutboundTransportSecurity(rawConfig interface{}, senderSettings *proxyman.SenderConfig) error {
-	if senderSettings.StreamSettings != nil && senderSettings.StreamSettings.GetSecurityType() != "" {
-		return nil
-	}
-
-	if tjCfg, ok := rawConfig.(*TrojanClientConfig); ok {
-		if requiresTransportSecurity(tjCfg.Address) {
-			return errors.New("trojan without TLS is prohibited unless the server address is a private IP or domain")
-		}
-	}
-
-	return nil
-}
-
 // Build implements Buildable.
 func (c *OutboundDetourConfig) Build() (*core.OutboundHandlerConfig, error) {
 	senderSettings := &proxyman.SenderConfig{}
@@ -325,9 +298,6 @@ func (c *OutboundDetourConfig) Build() (*core.OutboundHandlerConfig, error) {
 	rawConfig, err := outboundConfigLoader.LoadWithID(settings, c.Protocol)
 	if err != nil {
 		return nil, errors.New("failed to load outbound detour config for protocol ", c.Protocol).Base(err)
-	}
-	if err := validateOutboundTransportSecurity(rawConfig, senderSettings); err != nil {
-		return nil, err
 	}
 	ts, err := rawConfig.(Buildable).Build()
 	if err != nil {
