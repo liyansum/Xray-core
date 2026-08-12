@@ -153,18 +153,33 @@ func (s *Server) Process(ctx context.Context, network net.Network, conn stat.Con
 		return errors.New("unable to set read deadline").Base(err).AtWarning()
 	}
 
-	first := buf.FromBytes(make([]byte, buf.Size))
-	first.Clear()
+	first := buf.New()
 	firstLen, err := first.ReadFrom(conn)
 	if err != nil {
+		first.Release()
 		return errors.New("failed to read first request").Base(err)
 	}
-	errors.LogInfo(ctx, "firstLen = ", firstLen)
+	for firstLen < userHashCRLF && isTrojanUserHashPrefix(first.Bytes()) {
+		n, err := first.ReadFrom(conn)
+		firstLen += n
+		if err != nil {
+			first.Release()
+			return errors.New("failed to read fragmented request header").Base(err)
+		}
+		if n == 0 {
+			first.Release()
+			return errors.New("failed to read fragmented request header: no progress")
+		}
+	}
 
 	bufferedReader := &buf.BufferedReader{
 		Reader: buf.NewReader(conn),
 		Buffer: buf.MultiBuffer{first},
 	}
+	defer func() {
+		buf.ReleaseMulti(bufferedReader.Buffer)
+		bufferedReader.Buffer = nil
+	}()
 
 	var user *protocol.MemoryUser
 
@@ -172,7 +187,7 @@ func (s *Server) Process(ctx context.Context, network net.Network, conn stat.Con
 	isfb := napfb != nil
 
 	shouldFallback := false
-	if firstLen < 58 || first.Byte(56) != '\r' {
+	if firstLen < userHashCRLF || first.Byte(userHashSize) != '\r' || first.Byte(userHashSize+1) != '\n' {
 		// invalid protocol
 		err = errors.New("not trojan protocol")
 		log.Record(&log.AccessMessage{
@@ -184,7 +199,7 @@ func (s *Server) Process(ctx context.Context, network net.Network, conn stat.Con
 
 		shouldFallback = true
 	} else {
-		user = s.validator.Get(hexString(first.BytesTo(56)))
+		user = s.validator.Get(string(first.BytesTo(userHashSize)))
 		if user == nil {
 			// invalid user, let's fallback
 			err = errors.New("not a valid user")
@@ -239,8 +254,26 @@ func (s *Server) Process(ctx context.Context, network net.Network, conn stat.Con
 		Email:  user.Email,
 	})
 
-	errors.LogInfo(ctx, "received request for ", destination)
 	return s.handleConnection(ctx, sessionPolicy, destination, clientReader, buf.NewWriter(conn), dispatcher)
+}
+
+func isTrojanUserHashPrefix(data []byte) bool {
+	length := len(data)
+	if length > userHashSize {
+		length = userHashSize
+	}
+	for _, b := range data[:length] {
+		if !((b >= '0' && b <= '9') || (b >= 'a' && b <= 'f')) {
+			return false
+		}
+	}
+	if len(data) > userHashSize && data[userHashSize] != '\r' {
+		return false
+	}
+	if len(data) > userHashSize+1 && data[userHashSize+1] != '\n' {
+		return false
+	}
+	return true
 }
 
 func (s *Server) handleUDPPayload(ctx context.Context, sessionPolicy policy.Session, clientReader *PacketReader, clientWriter *PacketWriter, dispatcher routing.Dispatcher) error {
@@ -299,8 +332,6 @@ func (s *Server) handleUDPPayload(ctx context.Context, sessionPolicy policy.Sess
 						Email:  user.Email,
 					})
 				}
-				errors.LogInfo(ctx, "tunnelling request to ", destination)
-
 				if !s.cone || dest == nil {
 					dest = &destination
 				}
@@ -325,7 +356,9 @@ func (s *Server) handleConnection(ctx context.Context, sessionPolicy policy.Sess
 	clientWriter buf.Writer, dispatcher routing.Dispatcher,
 ) error {
 	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	timer := signal.CancelAfterInactivity(ctx, cancel, sessionPolicy.Timeouts.ConnectionIdle)
+	defer timer.SetTimeout(0)
 	ctx = policy.ContextWithBufferPolicy(ctx, sessionPolicy.Buffer)
 
 	link, err := dispatcher.Dispatch(ctx, destination)
@@ -335,7 +368,7 @@ func (s *Server) handleConnection(ctx context.Context, sessionPolicy policy.Sess
 
 	requestDone := func() error {
 		defer timer.SetTimeout(sessionPolicy.Timeouts.DownlinkOnly)
-		if buf.Copy(clientReader, link.Writer, buf.UpdateActivity(timer)) != nil {
+		if err := buf.Copy(clientReader, link.Writer, buf.UpdateActivity(timer)); err != nil {
 			return errors.New("failed to transfer request").Base(err)
 		}
 		return nil
@@ -364,16 +397,12 @@ func (s *Server) fallback(ctx context.Context, err error, sessionPolicy policy.S
 	if err := connection.SetReadDeadline(time.Time{}); err != nil {
 		errors.LogWarningInner(ctx, err, "unable to set back read deadline")
 	}
-	errors.LogInfoInner(ctx, err, "fallback starts")
-
 	name := ""
 	alpn := ""
 	if tlsConn, ok := iConn.(*tls.Conn); ok {
 		cs := tlsConn.ConnectionState()
 		name = cs.ServerName
 		alpn = cs.NegotiatedProtocol
-		errors.LogInfo(ctx, "realName = "+name)
-		errors.LogInfo(ctx, "realAlpn = "+alpn)
 	}
 	name = strings.ToLower(name)
 	alpn = strings.ToLower(alpn)
@@ -423,7 +452,6 @@ func (s *Server) fallback(ctx context.Context, err error, sessionPolicy policy.S
 						}
 						if k == '?' || k == ' ' {
 							path = string(firstBytes[i:j])
-							errors.LogInfo(ctx, "realPath = "+path)
 							if pfb[path] == nil {
 								path = ""
 							}
@@ -441,7 +469,9 @@ func (s *Server) fallback(ctx context.Context, err error, sessionPolicy policy.S
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	timer := signal.CancelAfterInactivity(ctx, cancel, sessionPolicy.Timeouts.ConnectionIdle)
+	defer timer.SetTimeout(0)
 	ctx = policy.ContextWithBufferPolicy(ctx, sessionPolicy.Buffer)
 
 	var conn net.Conn

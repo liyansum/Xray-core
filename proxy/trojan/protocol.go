@@ -21,7 +21,9 @@ var (
 )
 
 const (
-	maxLength = 8192
+	maxLength    = 8192
+	userHashSize = 56
+	userHashCRLF = userHashSize + 2
 
 	commandTCP byte = 1
 	commandUDP byte = 3
@@ -161,7 +163,7 @@ type ConnReader struct {
 func (c *ConnReader) ParseHeader() error {
 	var crlf [2]byte
 	var command [1]byte
-	var hash [56]byte
+	var hash [userHashSize]byte
 	if _, err := io.ReadFull(c.Reader, hash[:]); err != nil {
 		return errors.New("failed to read user hash").Base(err)
 	}
@@ -169,14 +171,22 @@ func (c *ConnReader) ParseHeader() error {
 	if _, err := io.ReadFull(c.Reader, crlf[:]); err != nil {
 		return errors.New("failed to read crlf").Base(err)
 	}
+	if crlf != [2]byte{'\r', '\n'} {
+		return errors.New("invalid crlf after user hash")
+	}
 
 	if _, err := io.ReadFull(c.Reader, command[:]); err != nil {
 		return errors.New("failed to read command").Base(err)
 	}
 
-	network := net.Network_TCP
-	if command[0] == commandUDP {
+	var network net.Network
+	switch command[0] {
+	case commandTCP:
+		network = net.Network_TCP
+	case commandUDP:
 		network = net.Network_UDP
+	default:
+		return errors.New("invalid command: ", command[0])
 	}
 
 	addr, port, err := addrParser.ReadAddressPort(nil, c.Reader)
@@ -187,6 +197,9 @@ func (c *ConnReader) ParseHeader() error {
 
 	if _, err := io.ReadFull(c.Reader, crlf[:]); err != nil {
 		return errors.New("failed to read crlf").Base(err)
+	}
+	if crlf != [2]byte{'\r', '\n'} {
+		return errors.New("invalid crlf after request address")
 	}
 
 	c.headerParsed = true
@@ -206,8 +219,20 @@ func (c *ConnReader) Read(p []byte) (int, error) {
 
 // ReadMultiBuffer implements buf.Reader
 func (c *ConnReader) ReadMultiBuffer() (buf.MultiBuffer, error) {
-	b := buf.New()
-	_, err := b.ReadFrom(c)
+	if !c.headerParsed {
+		if err := c.ParseHeader(); err != nil {
+			return nil, err
+		}
+	}
+
+	if reader, ok := c.Reader.(buf.Reader); ok {
+		return reader.ReadMultiBuffer()
+	}
+
+	b, err := buf.ReadBuffer(c.Reader)
+	if b == nil {
+		return nil, err
+	}
 	return buf.MultiBuffer{b}, err
 }
 
@@ -236,6 +261,9 @@ func (r *PacketReader) ReadMultiBuffer() (buf.MultiBuffer, error) {
 	var crlf [2]byte
 	if _, err := io.ReadFull(r, crlf[:]); err != nil {
 		return nil, errors.New("failed to read crlf").Base(err)
+	}
+	if crlf != [2]byte{'\r', '\n'} {
+		return nil, errors.New("invalid crlf before UDP payload")
 	}
 
 	dest := net.UDPDestination(addr, port)

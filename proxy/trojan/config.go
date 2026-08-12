@@ -3,7 +3,6 @@ package trojan
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 
 	"google.golang.org/protobuf/proto"
 
@@ -42,17 +41,9 @@ func (a *MemoryAccount) ToProto() proto.Message {
 }
 
 func hexSha224(password string) []byte {
-	buf := make([]byte, 56)
+	buf := make([]byte, userHashSize)
 	hash := sha256.New224()
 	common.Must2(hash.Write([]byte(password)))
 	hex.Encode(buf, hash.Sum(nil))
 	return buf
-}
-
-func hexString(data []byte) string {
-	str := ""
-	for _, v := range data {
-		str += fmt.Sprintf("%02x", v)
-	}
-	return str
 }
