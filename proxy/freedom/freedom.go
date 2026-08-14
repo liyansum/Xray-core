@@ -186,6 +186,11 @@ func (h *Handler) Process(ctx context.Context, link *transport.Link, dialer inte
 			newCancel()
 		}
 	}, plcy.Timeouts.ConnectionIdle)
+	defer cancel()
+	if newCancel != nil {
+		defer newCancel()
+	}
+	defer timer.SetTimeout(0)
 
 	requestDone := func() error {
 		defer timer.SetTimeout(plcy.Timeouts.DownlinkOnly)

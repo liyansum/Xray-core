@@ -2,6 +2,7 @@ package singbridge
 
 import (
 	"context"
+	"io"
 	"time"
 
 	B "github.com/sagernet/sing/common/buf"
@@ -33,8 +34,9 @@ type PacketConnWrapper struct {
 	buf.Reader
 	buf.Writer
 	net.Conn
-	Dest   net.Destination
-	cached buf.MultiBuffer
+	Dest    net.Destination
+	cached  buf.MultiBuffer
+	readErr error
 
 	// A simple patch to avoid goroutine leak since sing infra cannot awake read block by write err
 	T *signal.ActivityTimer
@@ -65,13 +67,22 @@ func (w *PacketConnWrapper) ReadPacket(buffer *B.Buffer) (addr M.Socksaddr, err 
 			return ToSocksaddr(destination), nil
 		}
 	}
+	if w.readErr != nil {
+		err = w.readErr
+		w.readErr = nil
+		return M.Socksaddr{}, err
+	}
 	mb, err := w.ReadMultiBuffer()
 	nb, bb := buf.SplitFirst(mb)
 	if bb == nil {
-		return M.Socksaddr{}, nil
+		if err != nil {
+			return M.Socksaddr{}, err
+		}
+		return M.Socksaddr{}, io.ErrNoProgress
 	} else {
 		buffer.Write(bb.Bytes())
 		w.cached = nb
+		w.readErr = err
 		var destination net.Destination
 		if bb.UDP != nil {
 			destination = *bb.UDP
@@ -102,6 +113,11 @@ func (w *PacketConnWrapper) WritePacket(buffer *B.Buffer, destination M.Socksadd
 }
 
 func (w *PacketConnWrapper) Close() error {
+	if w.T != nil {
+		w.T.SetTimeout(0)
+	}
 	buf.ReleaseMulti(w.cached)
+	w.cached = nil
+	w.readErr = nil
 	return nil
 }
