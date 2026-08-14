@@ -54,17 +54,25 @@ func (r *TimeoutWrapperReader) ReadMultiBuffer() (MultiBuffer, error) {
 
 func (r *TimeoutWrapperReader) ReadMultiBufferTimeout(duration time.Duration) (MultiBuffer, error) {
 	if r.done == nil {
+		if timeoutReader, ok := r.Reader.(TimeoutReader); ok {
+			mb, err := timeoutReader.ReadMultiBufferTimeout(duration)
+			if r.Counter != nil {
+				r.Counter.Add(int64(mb.Len()))
+			}
+			if errors.Cause(err) == ErrReadTimeout {
+				return mb, nil
+			}
+			return mb, err
+		}
+
 		r.done = make(chan struct{})
 		go func() {
 			r.mb, r.err = r.Reader.ReadMultiBuffer()
 			close(r.done)
 		}()
 	}
-	timeout := make(chan struct{})
-	go func() {
-		time.Sleep(duration)
-		close(timeout)
-	}()
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
 	select {
 	case <-r.done:
 		r.done = nil
@@ -72,7 +80,7 @@ func (r *TimeoutWrapperReader) ReadMultiBufferTimeout(duration time.Duration) (M
 			r.Counter.Add(int64(r.mb.Len()))
 		}
 		return r.mb, r.err
-	case <-timeout:
+	case <-timer.C:
 		return nil, nil
 	}
 }

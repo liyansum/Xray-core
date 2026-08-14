@@ -2,6 +2,7 @@ package buf
 
 import (
 	"io"
+	"sync"
 
 	"github.com/xtls/xray-core/common/bytespool"
 	"github.com/xtls/xray-core/common/errors"
@@ -15,7 +16,10 @@ const (
 
 var ErrBufferFull = errors.New("buffer is full")
 
-var pool = bytespool.GetPool(Size)
+// pool stores pointers to fixed-size arrays instead of byte slices. A slice
+// stored in sync.Pool has to be boxed into an interface on every Release,
+// which adds an allocation on the data path.
+var pool = sync.Pool{New: func() any { return new([Size]byte) }}
 
 // ownership represents the data owner of the buffer.
 type ownership uint8
@@ -39,15 +43,10 @@ type Buffer struct {
 
 // New creates a Buffer with 0 length and 8K capacity, managed.
 func New() *Buffer {
-	buf := pool.Get().([]byte)
-	if cap(buf) >= Size {
-		buf = buf[:Size]
-	} else {
-		buf = make([]byte, Size)
-	}
+	buf := pool.Get().(*[Size]byte)
 
 	return &Buffer{
-		v: buf,
+		v: buf[:],
 	}
 }
 
@@ -80,15 +79,10 @@ func FromBytes(b []byte) *Buffer {
 // StackNew creates a new Buffer object on stack, managed.
 // This method is for buffers that is released in the same function.
 func StackNew() Buffer {
-	buf := pool.Get().([]byte)
-	if cap(buf) >= Size {
-		buf = buf[:Size]
-	} else {
-		buf = make([]byte, Size)
-	}
+	buf := pool.Get().(*[Size]byte)
 
 	return Buffer{
-		v: buf,
+		v: buf[:],
 	}
 }
 
@@ -113,7 +107,7 @@ func (b *Buffer) Release() {
 	switch b.ownership {
 	case managed:
 		if cap(p) == Size {
-			pool.Put(p)
+			pool.Put((*[Size]byte)(p))
 		}
 	case bytespools:
 		bytespool.Free(p)

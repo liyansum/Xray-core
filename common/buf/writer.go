@@ -6,9 +6,14 @@ import (
 	"sync"
 
 	"github.com/xtls/xray-core/common"
+	"github.com/xtls/xray-core/common/bytespool"
 	"github.com/xtls/xray-core/common/errors"
 	"github.com/xtls/xray-core/features/stats"
 )
+
+const coalescedWritePoolSize = 32 * 1024
+
+var coalescedWritePool = sync.Pool{New: func() any { return new([coalescedWritePoolSize]byte) }}
 
 // BufferToBytesWriter is a Writer that writes alloc.Buffer into underlying writer.
 type BufferToBytesWriter struct {
@@ -36,38 +41,43 @@ func WriteMultiBufferCoalesced(writer io.Writer, mb MultiBuffer, batchSize int32
 		return WriteAllBytes(writer, mb[0].Bytes(), nil)
 	}
 
-	batch := NewWithSize(batchSize)
-	defer batch.Release()
-
-	flush := func() error {
-		if batch.IsEmpty() {
-			return nil
-		}
-		if err := WriteAllBytes(writer, batch.Bytes(), nil); err != nil {
-			return err
-		}
-		batch.Clear()
-		return nil
+	var pooledBatch *[coalescedWritePoolSize]byte
+	var batch []byte
+	if batchSize == coalescedWritePoolSize {
+		pooledBatch = coalescedWritePool.Get().(*[coalescedWritePoolSize]byte)
+		batch = pooledBatch[:]
+	} else {
+		batch = bytespool.Alloc(batchSize)[:batchSize]
 	}
+	defer func() {
+		if pooledBatch != nil {
+			coalescedWritePool.Put(pooledBatch)
+		} else {
+			bytespool.Free(batch)
+		}
+	}()
 
+	used := 0
 	for _, b := range mb {
 		payload := b.Bytes()
 		for len(payload) > 0 {
-			available := int(batchSize - batch.Len())
-			if available == 0 {
-				if err := flush(); err != nil {
+			n := min(len(payload), len(batch)-used)
+			copy(batch[used:], payload[:n])
+			used += n
+			payload = payload[n:]
+			if used == len(batch) {
+				if err := WriteAllBytes(writer, batch, nil); err != nil {
 					return err
 				}
-				available = int(batchSize)
+				used = 0
 			}
-
-			n := min(len(payload), available)
-			copy(batch.Extend(int32(n)), payload[:n])
-			payload = payload[n:]
 		}
 	}
 
-	return flush()
+	if used != 0 {
+		return WriteAllBytes(writer, batch[:used], nil)
+	}
+	return nil
 }
 
 // WriteMultiBuffer implements Writer. This method takes ownership of the given buffer.

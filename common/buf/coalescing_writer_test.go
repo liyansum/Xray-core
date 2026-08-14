@@ -146,3 +146,24 @@ func slicesEqual(a, b []int) bool {
 	}
 	return true
 }
+
+type discardBatchWriter struct{}
+
+func (discardBatchWriter) Write(p []byte) (int, error) { return len(p), nil }
+
+func BenchmarkWriteMultiBufferCoalesced32K(b *testing.B) {
+	payloads := make([]*Buffer, 8)
+	for i := range payloads {
+		payloads[i] = FromBytes(make([]byte, Size))
+	}
+	w := discardBatchWriter{}
+	b.SetBytes(8 * Size)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		mb := MultiBuffer{payloads[0], payloads[1], payloads[2], payloads[3], payloads[4], payloads[5], payloads[6], payloads[7]}
+		if err := WriteMultiBufferCoalesced(w, mb, 32*1024); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
