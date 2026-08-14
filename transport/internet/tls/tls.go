@@ -31,7 +31,10 @@ type Conn struct {
 	*tls.Conn
 }
 
-const tlsCloseTimeout = 250 * time.Millisecond
+const (
+	tlsCloseTimeout   = 250 * time.Millisecond
+	tlsWriteBatchSize = 32 * 1024
+)
 
 func (c *Conn) Close() error {
 	timer := time.AfterFunc(tlsCloseTimeout, func() {
@@ -42,10 +45,11 @@ func (c *Conn) Close() error {
 }
 
 func (c *Conn) WriteMultiBuffer(mb buf.MultiBuffer) error {
-	mb = buf.Compact(mb)
-	mb, err := buf.WriteMultiBuffer(c, mb)
-	buf.ReleaseMulti(mb)
-	return err
+	return buf.WriteMultiBufferCoalesced(c, mb, tlsWriteBatchSize)
+}
+
+func (c *Conn) MultiBufferBatchSize() int32 {
+	return tlsWriteBatchSize
 }
 
 func (c *Conn) HandshakeContextServerName(ctx context.Context) string {

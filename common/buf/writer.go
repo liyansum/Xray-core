@@ -18,6 +18,58 @@ type BufferToBytesWriter struct {
 	cache   [][]byte
 }
 
+// WriteMultiBufferCoalesced writes stream data in contiguous batches. It takes
+// ownership of mb. The temporary batch buffer is borrowed only for the duration
+// of this call, so idle connections do not retain per-connection memory.
+func WriteMultiBufferCoalesced(writer io.Writer, mb MultiBuffer, batchSize int32) error {
+	defer ReleaseMulti(mb)
+
+	if mb.IsEmpty() {
+		return nil
+	}
+	if batchSize <= 0 {
+		return errors.New("invalid coalesced write batch size: ", batchSize)
+	}
+
+	// Avoid borrowing a larger scratch buffer when there is nothing to merge.
+	if len(mb) == 1 {
+		return WriteAllBytes(writer, mb[0].Bytes(), nil)
+	}
+
+	batch := NewWithSize(batchSize)
+	defer batch.Release()
+
+	flush := func() error {
+		if batch.IsEmpty() {
+			return nil
+		}
+		if err := WriteAllBytes(writer, batch.Bytes(), nil); err != nil {
+			return err
+		}
+		batch.Clear()
+		return nil
+	}
+
+	for _, b := range mb {
+		payload := b.Bytes()
+		for len(payload) > 0 {
+			available := int(batchSize - batch.Len())
+			if available == 0 {
+				if err := flush(); err != nil {
+					return err
+				}
+				available = int(batchSize)
+			}
+
+			n := min(len(payload), available)
+			copy(batch.Extend(int32(n)), payload[:n])
+			payload = payload[n:]
+		}
+	}
+
+	return flush()
+}
+
 // WriteMultiBuffer implements Writer. This method takes ownership of the given buffer.
 func (w *BufferToBytesWriter) WriteMultiBuffer(mb MultiBuffer) error {
 	defer ReleaseMulti(mb)
@@ -237,6 +289,23 @@ func (w *BufferedWriter) Close() error {
 // SequentialWriter is a Writer that writes MultiBuffer sequentially into the underlying io.Writer.
 type SequentialWriter struct {
 	io.Writer
+}
+
+// multiBufferBatchWriter marks stream writers that benefit from contiguous
+// MultiBuffer writes. Wrapped writers, such as traffic counters, use the batch
+// size while keeping writes on the outer wrapper.
+type multiBufferBatchWriter interface {
+	Writer
+	MultiBufferBatchSize() int32
+}
+
+type coalescingWriter struct {
+	io.Writer
+	batchSize int32
+}
+
+func (w *coalescingWriter) WriteMultiBuffer(mb MultiBuffer) error {
+	return WriteMultiBufferCoalesced(w.Writer, mb, w.batchSize)
 }
 
 // WriteMultiBuffer implements Writer.

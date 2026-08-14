@@ -176,6 +176,12 @@ func NewWriter(writer io.Writer) Writer {
 	iConn := writer
 	if statConn, ok := writer.(*stat.CounterConnection); ok {
 		iConn = statConn.Connection
+		if batchWriter, ok := iConn.(multiBufferBatchWriter); ok {
+			return &coalescingWriter{
+				Writer:    writer,
+				batchSize: batchWriter.MultiBufferBatchSize(),
+			}
+		}
 	}
 
 	if isPacketWriter(iConn) {
