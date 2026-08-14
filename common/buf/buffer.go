@@ -137,6 +137,24 @@ func (b *Buffer) Bytes() []byte {
 	return b.v[b.start:b.end]
 }
 
+// WritableBytes returns the unused portion of the buffer without clearing it
+// or making it part of the readable contents. Call Commit after the returned
+// bytes have been overwritten. This is intended for read-like operations where
+// the kernel or another trusted source completely initializes the committed
+// prefix.
+func (b *Buffer) WritableBytes() []byte {
+	return b.v[b.end:]
+}
+
+// Commit makes the first n bytes returned by WritableBytes readable without
+// clearing them. The caller must have initialized the entire committed prefix.
+func (b *Buffer) Commit(n int32) {
+	if n < 0 || n > b.Available() {
+		panic("committing out of bound")
+	}
+	b.end += n
+}
+
 // Extend increases the buffer size by n bytes, and returns the extended part.
 // It panics if result size is larger than size of this buffer.
 func (b *Buffer) Extend(n int32) []byte {

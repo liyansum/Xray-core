@@ -218,9 +218,9 @@ s:
 
 func (c *dispatcherConn) WriteTo(p []byte, addr net.Addr) (int, error) {
 	buffer := buf.New()
-	raw := buffer.Extend(buf.Size)
+	raw := buffer.WritableBytes()
 	n := copy(raw, p)
-	buffer.Resize(0, int32(n))
+	buffer.Commit(int32(n))
 
 	destination := net.DestinationFromAddr(addr)
 	buffer.UDP = &destination

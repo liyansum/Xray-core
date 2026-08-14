@@ -168,6 +168,7 @@ type udpConn struct {
 	reader           buf.Reader
 	writer           buf.Writer
 	output           func([]byte) (int, error)
+	outputMulti      func(buf.MultiBuffer) (int64, error)
 	remote           net.Addr
 	local            net.Addr
 	done             *done.Instance
@@ -214,6 +215,32 @@ func (c *udpConn) Write(buf []byte) (int, error) {
 		c.updateActivity()
 	}
 	return n, err
+}
+
+// WriteMultiBuffer writes datagrams already accumulated by the dispatcher in
+// one platform batch. It doesn't delay a packet to wait for more data.
+func (c *udpConn) WriteMultiBuffer(mb buf.MultiBuffer) error {
+	defer buf.ReleaseMulti(mb)
+	if mb.IsEmpty() {
+		return nil
+	}
+	if c.outputMulti == nil {
+		for _, b := range mb {
+			if _, err := c.Write(b.Bytes()); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	n, err := c.outputMulti(mb)
+	if c.downlink != nil {
+		c.downlink.Add(n)
+	}
+	if err == nil {
+		c.updateActivity()
+	}
+	return err
 }
 
 func (c *udpConn) Close() error {
@@ -286,6 +313,9 @@ func (w *udpWorker) getConnection(id connID) (*udpConn, bool) {
 		writer: pWriter,
 		output: func(b []byte) (int, error) {
 			return w.hub.WriteTo(b, id.src)
+		},
+		outputMulti: func(mb buf.MultiBuffer) (int64, error) {
+			return w.hub.WriteMultiBuffer(mb, id.src)
 		},
 		remote: &net.UDPAddr{
 			IP:   id.src.Address.IP(),

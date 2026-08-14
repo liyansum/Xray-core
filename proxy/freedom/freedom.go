@@ -27,6 +27,7 @@ import (
 	"github.com/xtls/xray-core/transport"
 	"github.com/xtls/xray-core/transport/internet"
 	"github.com/xtls/xray-core/transport/internet/stat"
+	internetudp "github.com/xtls/xray-core/transport/internet/udp"
 )
 
 var useSplice atomic.Bool
@@ -164,6 +165,10 @@ func (h *Handler) Process(ctx context.Context, link *transport.Link, dialer inte
 		}
 	}
 	defer conn.Close()
+	var udpBatchConn *internetudp.BatchConn
+	if destination.Network == net.Network_UDP {
+		udpBatchConn = newPacketBatchConn(conn)
+	}
 	errors.LogInfo(ctx, "connection opened to ", destination, ", local endpoint ", conn.LocalAddr(), ", remote endpoint ", conn.RemoteAddr())
 
 	var newCtx context.Context
@@ -197,7 +202,7 @@ func (h *Handler) Process(ctx context.Context, link *transport.Link, dialer inte
 				writer = buf.NewWriter(conn)
 			}
 		} else {
-			writer = NewPacketWriter(conn, h, UDPOverride, destination)
+			writer = newPacketWriter(conn, h, UDPOverride, destination, udpBatchConn)
 			if h.config.Noises != nil {
 				errors.LogDebug(ctx, "NOISE", h.config.Noises)
 				writer = &NoisePacketWriter{
@@ -232,7 +237,7 @@ func (h *Handler) Process(ctx context.Context, link *transport.Link, dialer inte
 		if destination.Network == net.Network_TCP {
 			reader = buf.NewReader(conn)
 		} else {
-			reader = NewPacketReader(conn, UDPOverride, destination)
+			reader = newPacketReader(conn, UDPOverride, destination, udpBatchConn)
 		}
 		if err := buf.Copy(reader, output, buf.UpdateActivity(timer)); err != nil {
 			return errors.New("failed to process response").Base(err)
@@ -252,6 +257,10 @@ func (h *Handler) Process(ctx context.Context, link *transport.Link, dialer inte
 }
 
 func NewPacketReader(conn net.Conn, UDPOverride net.Destination, DialDest net.Destination) buf.Reader {
+	return newPacketReader(conn, UDPOverride, DialDest, nil)
+}
+
+func newPacketReader(conn net.Conn, UDPOverride net.Destination, DialDest net.Destination, batchConn *internetudp.BatchConn) buf.Reader {
 	iConn := conn
 	statConn, ok := iConn.(*stat.CounterConnection)
 	if ok {
@@ -262,6 +271,9 @@ func NewPacketReader(conn net.Conn, UDPOverride net.Destination, DialDest net.De
 		counter = statConn.ReadCounter
 	}
 	if c, ok := iConn.(*internet.PacketConnWrapper); ok {
+		if batchConn == nil {
+			batchConn = internetudp.NewBatchConn(c.PacketConn)
+		}
 		isOverridden := false
 		if UDPOverride.Address != nil || UDPOverride.Port != 0 {
 			isOverridden = true
@@ -269,6 +281,7 @@ func NewPacketReader(conn net.Conn, UDPOverride net.Destination, DialDest net.De
 
 		return &PacketReader{
 			PacketConnWrapper: c,
+			BatchConn:         batchConn,
 			Counter:           counter,
 			IsOverridden:      isOverridden,
 			InitUnchangedAddr: DialDest.Address,
@@ -280,6 +293,7 @@ func NewPacketReader(conn net.Conn, UDPOverride net.Destination, DialDest net.De
 
 type PacketReader struct {
 	*internet.PacketConnWrapper
+	BatchConn *internetudp.BatchConn
 	stats.Counter
 	IsOverridden      bool
 	InitUnchangedAddr net.Address
@@ -288,38 +302,83 @@ type PacketReader struct {
 
 func (r *PacketReader) ReadMultiBuffer() (buf.MultiBuffer, error) {
 	b := buf.New()
-	b.Resize(0, buf.Size)
-	for {
-		n, d, err := r.PacketConnWrapper.ReadFrom(b.Bytes())
-		if err != nil {
-			b.Release()
-			return nil, err
-		}
-		udpAddr := d.(*net.UDPAddr)
-		sourceAddr := net.IPAddress(udpAddr.IP)
-		b.Resize(0, int32(n))
-
-		// if udp dest addr is changed, we are unable to get the correct src addr
-		// so we don't attach src info to udp packet, break cone behavior, assuming the dial dest is the expected scr addr
-		if !r.IsOverridden {
-			if r.InitChangedAddr == sourceAddr {
-				sourceAddr = r.InitUnchangedAddr
-			}
-			b.UDP = &net.Destination{
-				Address: sourceAddr,
-				Port:    net.Port(udpAddr.Port),
-				Network: net.Network_UDP,
-			}
-		}
-		if r.Counter != nil {
-			r.Counter.Add(int64(n))
-		}
-		return buf.MultiBuffer{b}, nil
+	readStarted := time.Now()
+	n, d, err := r.PacketConnWrapper.ReadFrom(b.WritableBytes())
+	readImmediately := time.Since(readStarted) <= 100*time.Microsecond
+	if err != nil {
+		b.Release()
+		return nil, err
 	}
+	b.Commit(int32(n))
+	if !r.setPacketSource(b, d) {
+		b.Release()
+		return nil, errors.New("invalid UDP source address")
+	}
+
+	mb := buf.MultiBuffer{b}
+	total := int64(n)
+	if readImmediately && r.BatchConn != nil && r.BatchConn.HasPending() {
+		// The first packet has already been read without retaining extra memory.
+		// Drain at most seven queued packets so idle UDP sessions never hold a
+		// permanent 16-buffer recvmmsg working set.
+		var messages [7]internetudp.BatchReadMessage
+		for i := range messages {
+			messages[i].Buffer = buf.New()
+		}
+		batchN, batchErr := r.BatchConn.Read(messages[:], true)
+		for i := 0; i < batchN; i++ {
+			packet := messages[i].Buffer
+			messages[i].Buffer = nil
+			if !r.setPacketSource(packet, messages[i].Addr) {
+				packet.Release()
+				continue
+			}
+			total += int64(messages[i].N)
+			mb = append(mb, packet)
+		}
+		for i := batchN; i < len(messages); i++ {
+			messages[i].Buffer.Release()
+		}
+		if batchErr != nil && !internetudp.IsBatchWouldBlock(batchErr) {
+			// Preserve the already received datagram and fall back to the regular
+			// path for future reads if this socket can't use recvmmsg.
+			r.BatchConn = nil
+		}
+	}
+	if r.Counter != nil {
+		r.Counter.Add(total)
+	}
+	return mb, nil
+}
+
+func (r *PacketReader) setPacketSource(b *buf.Buffer, addr net.Addr) bool {
+	udpAddr, ok := addr.(*net.UDPAddr)
+	if !ok {
+		return false
+	}
+	sourceAddr := net.IPAddress(udpAddr.IP)
+
+	// If UDP destination address is changed, the correct source address is
+	// unavailable. Don't attach source info in that case to preserve cone mode.
+	if !r.IsOverridden {
+		if r.InitChangedAddr == sourceAddr {
+			sourceAddr = r.InitUnchangedAddr
+		}
+		b.UDP = &net.Destination{
+			Address: sourceAddr,
+			Port:    net.Port(udpAddr.Port),
+			Network: net.Network_UDP,
+		}
+	}
+	return true
 }
 
 // DialDest means the dial target used in the dialer when creating conn
 func NewPacketWriter(conn net.Conn, h *Handler, UDPOverride net.Destination, DialDest net.Destination) buf.Writer {
+	return newPacketWriter(conn, h, UDPOverride, DialDest, nil)
+}
+
+func newPacketWriter(conn net.Conn, h *Handler, UDPOverride net.Destination, DialDest net.Destination, batchConn *internetudp.BatchConn) buf.Writer {
 	iConn := conn
 	statConn, ok := iConn.(*stat.CounterConnection)
 	if ok {
@@ -330,6 +389,9 @@ func NewPacketWriter(conn net.Conn, h *Handler, UDPOverride net.Destination, Dia
 		counter = statConn.WriteCounter
 	}
 	if c, ok := iConn.(*internet.PacketConnWrapper); ok {
+		if batchConn == nil {
+			batchConn = internetudp.NewBatchConn(c.PacketConn)
+		}
 		// If DialDest is a domain, it will be resolved in dialer
 		// check this behavior and add it to map
 		resolvedUDPAddr := utils.NewTypedSyncMap[string, net.Address]()
@@ -338,6 +400,7 @@ func NewPacketWriter(conn net.Conn, h *Handler, UDPOverride net.Destination, Dia
 		}
 		return &PacketWriter{
 			PacketConnWrapper: c,
+			BatchConn:         batchConn,
 			Counter:           counter,
 			Handler:           h,
 			UDPOverride:       UDPOverride,
@@ -349,8 +412,20 @@ func NewPacketWriter(conn net.Conn, h *Handler, UDPOverride net.Destination, Dia
 	return &buf.SequentialWriter{Writer: conn}
 }
 
+func newPacketBatchConn(conn net.Conn) *internetudp.BatchConn {
+	iConn := conn
+	if statConn, ok := iConn.(*stat.CounterConnection); ok {
+		iConn = statConn.Connection
+	}
+	if c, ok := iConn.(*internet.PacketConnWrapper); ok {
+		return internetudp.NewBatchConn(c.PacketConn)
+	}
+	return nil
+}
+
 type PacketWriter struct {
 	*internet.PacketConnWrapper
+	BatchConn *internetudp.BatchConn
 	stats.Counter
 	*Handler
 	UDPOverride net.Destination
@@ -364,72 +439,110 @@ type PacketWriter struct {
 }
 
 func (w *PacketWriter) WriteMultiBuffer(mb buf.MultiBuffer) error {
-	for {
-		mb2, b := buf.SplitFirst(mb)
-		mb = mb2
-		if b == nil {
-			break
-		}
-		var n int
-		var err error
-		if b.UDP != nil {
-			if w.UDPOverride.Address != nil {
-				b.UDP.Address = w.UDPOverride.Address
-			}
-			if w.UDPOverride.Port != 0 {
-				b.UDP.Port = w.UDPOverride.Port
-			}
-			if b.UDP.Address.Family().IsDomain() {
-				if ip, ok := w.ResolvedUDPAddr.Load(b.UDP.Address.Domain()); ok {
-					b.UDP.Address = ip
-				} else {
-					ShouldUseSystemResolver := true
-					if w.Handler.config.DomainStrategy.HasStrategy() {
-						ips, err := internet.LookupForIP(b.UDP.Address.Domain(), w.Handler.config.DomainStrategy, w.LocalAddr)
-						if err != nil {
-							// drop packet if resolve failed when forceIP
-							if w.Handler.config.DomainStrategy.ForceIP() {
-								b.Release()
-								continue
-							}
-						} else {
-							ip = net.IPAddress(ips[dice.Roll(len(ips))])
-							ShouldUseSystemResolver = false
-						}
-					}
-					if ShouldUseSystemResolver {
-						udpAddr, err := net.ResolveUDPAddr("udp", b.UDP.NetAddr())
-						if err != nil {
-							b.Release()
-							continue
-						} else {
-							ip = net.IPAddress(udpAddr.IP)
-						}
-					}
-					if ip != nil {
-						b.UDP.Address, _ = w.ResolvedUDPAddr.LoadOrStore(b.UDP.Address.Domain(), ip)
-					}
-				}
-			}
-			destAddr := b.UDP.RawNetAddr()
-			if destAddr == nil {
-				b.Release()
+	defer buf.ReleaseMulti(mb)
+	if w.BatchConn == nil || len(mb) < 2 {
+		for _, b := range mb {
+			addr, ok := w.resolvePacketAddress(b)
+			if !ok {
 				continue
 			}
-			n, err = w.PacketConnWrapper.WriteTo(b.Bytes(), destAddr)
-		} else {
-			n, err = w.PacketConnWrapper.Write(b.Bytes())
+			n, err := w.PacketConnWrapper.WriteTo(b.Bytes(), addr)
+			if err != nil {
+				return err
+			}
+			if w.Counter != nil {
+				w.Counter.Add(int64(n))
+			}
 		}
-		b.Release()
-		if err != nil {
-			buf.ReleaseMulti(mb)
-			return err
+		return nil
+	}
+
+	var messages [internetudp.MaxBatchSize]internetudp.BatchWriteMessage
+	for first := 0; first < len(mb); {
+		count := 0
+		for first < len(mb) && count < len(messages) {
+			b := mb[first]
+			first++
+			addr, ok := w.resolvePacketAddress(b)
+			if !ok {
+				continue
+			}
+			if b.IsEmpty() {
+				n, err := w.PacketConnWrapper.WriteTo(nil, addr)
+				if err != nil {
+					return err
+				}
+				if w.Counter != nil {
+					w.Counter.Add(int64(n))
+				}
+				continue
+			}
+			messages[count] = internetudp.BatchWriteMessage{Payload: b.Bytes(), Addr: addr}
+			count++
 		}
-		if w.Counter != nil {
-			w.Counter.Add(int64(n))
+
+		sent := 0
+		for sent < count {
+			n, err := w.BatchConn.Write(messages[sent:count])
+			if w.Counter != nil {
+				for i := sent; i < sent+n; i++ {
+					w.Counter.Add(int64(messages[i].N))
+				}
+			}
+			sent += n
+			if err != nil {
+				return err
+			}
+		}
+		for i := 0; i < count; i++ {
+			messages[i] = internetudp.BatchWriteMessage{}
 		}
 	}
 	return nil
+}
+
+func (w *PacketWriter) resolvePacketAddress(b *buf.Buffer) (net.Addr, bool) {
+	if b.UDP == nil {
+		return w.PacketConnWrapper.Dest, true
+	}
+	if w.UDPOverride.Address != nil {
+		b.UDP.Address = w.UDPOverride.Address
+	}
+	if w.UDPOverride.Port != 0 {
+		b.UDP.Port = w.UDPOverride.Port
+	}
+	if b.UDP.Address.Family().IsDomain() {
+		domain := b.UDP.Address.Domain()
+		if ip, ok := w.ResolvedUDPAddr.Load(domain); ok {
+			b.UDP.Address = ip
+		} else {
+			shouldUseSystemResolver := true
+			var ip net.Address
+			if w.Handler.config.DomainStrategy.HasStrategy() {
+				ips, err := internet.LookupForIP(domain, w.Handler.config.DomainStrategy, w.LocalAddr)
+				if err != nil {
+					if w.Handler.config.DomainStrategy.ForceIP() {
+						return nil, false
+					}
+				} else {
+					ip = net.IPAddress(ips[dice.Roll(len(ips))])
+					shouldUseSystemResolver = false
+				}
+			}
+			if shouldUseSystemResolver {
+				udpAddr, err := net.ResolveUDPAddr("udp", b.UDP.NetAddr())
+				if err != nil {
+					return nil, false
+				}
+				ip = net.IPAddress(udpAddr.IP)
+			}
+			if ip != nil {
+				b.UDP.Address, _ = w.ResolvedUDPAddr.LoadOrStore(domain, ip)
+			}
+		}
+	}
+	destAddr := b.UDP.RawNetAddr()
+	return destAddr, destAddr != nil
 }
 
 type NoisePacketWriter struct {

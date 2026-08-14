@@ -103,6 +103,28 @@ func TestBufferResize(t *testing.T) {
 	}
 }
 
+func TestBufferWritableBytesCommit(t *testing.T) {
+	buffer := New()
+	defer buffer.Release()
+
+	writable := buffer.WritableBytes()
+	copy(writable, "payload")
+	if !buffer.IsEmpty() {
+		t.Fatal("uncommitted bytes became readable")
+	}
+	buffer.Commit(7)
+	if diff := cmp.Diff([]byte("payload"), buffer.Bytes()); diff != "" {
+		t.Fatal(diff)
+	}
+
+	defer func() {
+		if recover() == nil {
+			t.Fatal("out-of-bounds commit did not panic")
+		}
+	}()
+	buffer.Commit(buffer.Available() + 1)
+}
+
 func TestBufferSlice(t *testing.T) {
 	{
 		b := New()
@@ -219,6 +241,35 @@ func BenchmarkWriteByte8(b *testing.B) {
 		_ = buffer.WriteByte('f')
 		_ = buffer.WriteByte('g')
 		_ = buffer.WriteByte('h')
+		buffer.Clear()
+	}
+}
+
+func BenchmarkUDPPrepareCleared8K(b *testing.B) {
+	buffer := New()
+	defer buffer.Release()
+	payload := make([]byte, 200)
+	b.ReportAllocs()
+	b.SetBytes(int64(len(payload)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		writable := buffer.Extend(Size)
+		copy(writable, payload)
+		buffer.Resize(0, int32(len(payload)))
+		buffer.Clear()
+	}
+}
+
+func BenchmarkUDPPrepareCommitted200B(b *testing.B) {
+	buffer := New()
+	defer buffer.Release()
+	payload := make([]byte, 200)
+	b.ReportAllocs()
+	b.SetBytes(int64(len(payload)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		copy(buffer.WritableBytes(), payload)
+		buffer.Commit(int32(len(payload)))
 		buffer.Clear()
 	}
 }
