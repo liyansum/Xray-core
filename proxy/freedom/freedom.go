@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"io"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -395,8 +396,10 @@ func newPacketWriter(conn net.Conn, h *Handler, UDPOverride net.Destination, Dia
 		// If DialDest is a domain, it will be resolved in dialer
 		// check this behavior and add it to map
 		resolvedUDPAddr := utils.NewTypedSyncMap[string, net.Address]()
+		var resolvedUDPOrder []string
 		if DialDest.Address.Family().IsDomain() {
 			resolvedUDPAddr.Store(DialDest.Address.Domain(), net.DestinationFromAddr(conn.RemoteAddr()).Address)
+			resolvedUDPOrder = append(resolvedUDPOrder, DialDest.Address.Domain())
 		}
 		return &PacketWriter{
 			PacketConnWrapper: c,
@@ -406,6 +409,7 @@ func newPacketWriter(conn net.Conn, h *Handler, UDPOverride net.Destination, Dia
 			UDPOverride:       UDPOverride,
 			ResolvedUDPAddr:   resolvedUDPAddr,
 			LocalAddr:         net.DestinationFromAddr(conn.LocalAddr()).Address,
+			resolvedUDPOrder:  resolvedUDPOrder,
 		}
 
 	}
@@ -436,6 +440,33 @@ type PacketWriter struct {
 	// So, cache and keep the resolve result
 	ResolvedUDPAddr *utils.TypedSyncMap[string, net.Address]
 	LocalAddr       net.Address
+
+	resolvedUDPMu    sync.Mutex
+	resolvedUDPOrder []string
+	resolvedUDPNext  int
+}
+
+const resolvedUDPAddrCacheCapacity = 256
+
+// cacheResolvedUDPAddr keeps a stable address for each recently used domain
+// while preserving PacketWriter's existing public map type. FIFO eviction is
+// sufficient because DNS TTL isn't tracked; the requirement here is a fixed
+// per-session memory bound.
+func (w *PacketWriter) cacheResolvedUDPAddr(domain string, address net.Address) net.Address {
+	w.resolvedUDPMu.Lock()
+	defer w.resolvedUDPMu.Unlock()
+	if existing, found := w.ResolvedUDPAddr.Load(domain); found {
+		return existing
+	}
+	if len(w.resolvedUDPOrder) == resolvedUDPAddrCacheCapacity {
+		w.ResolvedUDPAddr.Delete(w.resolvedUDPOrder[w.resolvedUDPNext])
+		w.resolvedUDPOrder[w.resolvedUDPNext] = domain
+		w.resolvedUDPNext = (w.resolvedUDPNext + 1) % resolvedUDPAddrCacheCapacity
+	} else {
+		w.resolvedUDPOrder = append(w.resolvedUDPOrder, domain)
+	}
+	w.ResolvedUDPAddr.Store(domain, address)
+	return address
 }
 
 func (w *PacketWriter) WriteMultiBuffer(mb buf.MultiBuffer) error {
@@ -537,7 +568,7 @@ func (w *PacketWriter) resolvePacketAddress(b *buf.Buffer) (net.Addr, bool) {
 				ip = net.IPAddress(udpAddr.IP)
 			}
 			if ip != nil {
-				b.UDP.Address, _ = w.ResolvedUDPAddr.LoadOrStore(domain, ip)
+				b.UDP.Address = w.cacheResolvedUDPAddr(domain, ip)
 			}
 		}
 	}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/xtls/xray-core/common/buf"
 	"github.com/xtls/xray-core/common/net"
+	"github.com/xtls/xray-core/common/utils"
 	"github.com/xtls/xray-core/transport/internet"
 	internetudp "github.com/xtls/xray-core/transport/internet/udp"
 )
@@ -125,5 +126,39 @@ func TestPacketReaderDrainsBurstAndPreservesStats(t *testing.T) {
 	}
 	if got := counter.Value(); got != wantBytes {
 		t.Fatalf("counter is %d, want %d", got, wantBytes)
+	}
+}
+
+func TestResolvedUDPAddrCacheIsBounded(t *testing.T) {
+	writer := &PacketWriter{ResolvedUDPAddr: utils.NewTypedSyncMap[string, net.Address]()}
+	address := net.IPAddress([]byte{127, 0, 0, 1})
+	for i := 0; i < resolvedUDPAddrCacheCapacity+32; i++ {
+		writer.cacheResolvedUDPAddr(fmt.Sprintf("host-%d.example", i), address)
+	}
+	count := 0
+	writer.ResolvedUDPAddr.Range(func(string, net.Address) bool {
+		count++
+		return true
+	})
+	if got := count; got != resolvedUDPAddrCacheCapacity {
+		t.Fatalf("cache contains %d entries, want %d", got, resolvedUDPAddrCacheCapacity)
+	}
+	if _, found := writer.ResolvedUDPAddr.Load("host-0.example"); found {
+		t.Fatal("oldest cache entry was not evicted")
+	}
+	if got, found := writer.ResolvedUDPAddr.Load(fmt.Sprintf("host-%d.example", resolvedUDPAddrCacheCapacity+31)); !found || got != address {
+		t.Fatal("newest cache entry is missing")
+	}
+}
+
+func TestResolvedUDPAddrCacheLoadOrStore(t *testing.T) {
+	writer := &PacketWriter{ResolvedUDPAddr: utils.NewTypedSyncMap[string, net.Address]()}
+	first := net.IPAddress([]byte{127, 0, 0, 1})
+	second := net.IPAddress([]byte{127, 0, 0, 2})
+	if got := writer.cacheResolvedUDPAddr("example.com", first); got != first {
+		t.Fatal("first address was not stored")
+	}
+	if got := writer.cacheResolvedUDPAddr("example.com", second); got != first {
+		t.Fatal("existing address was not kept stable")
 	}
 }
